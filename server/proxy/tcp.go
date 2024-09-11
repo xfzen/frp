@@ -21,6 +21,7 @@ import (
 	"strconv"
 
 	v1 "github.com/fatedier/frp/pkg/config/v1"
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 func init() {
@@ -47,6 +48,8 @@ func NewTCPProxy(baseProxy *BaseProxy) Proxy {
 }
 
 func (pxy *TCPProxy) Run() (remoteAddr string, err error) {
+	logx.Debugf("TCPProxy Run remoteAddr: %v", remoteAddr)
+
 	xl := pxy.xl
 	if pxy.cfg.LoadBalancer.Group != "" {
 		l, realBindPort, errRet := pxy.rc.TCPGroupCtl.Listen(pxy.name, pxy.cfg.LoadBalancer.Group, pxy.cfg.LoadBalancer.GroupKey,
@@ -65,21 +68,35 @@ func (pxy *TCPProxy) Run() (remoteAddr string, err error) {
 		xl.Infof("tcp proxy listen port [%d] in group [%s]", pxy.cfg.RemotePort, pxy.cfg.LoadBalancer.Group)
 	} else {
 		pxy.realBindPort, err = pxy.rc.TCPPortManager.Acquire(pxy.name, pxy.cfg.RemotePort)
+
+		proxyType := pxy.cfg.Type
+		logx.Debugf("proxyType: %v, realBindPort: %v, err: %v", proxyType, pxy.realBindPort, err)
+
 		if err != nil {
-			return
+			if proxyType == "tcpv2" {
+				logx.Debugf("TCP V2")
+				pxy.realBindPort = pxy.cfg.RemotePort
+				err = nil
+			} else {
+				logx.Errorf(err.Error())
+				return
+			}
+		} else {
+			listener, errRet := net.Listen("tcp", net.JoinHostPort(pxy.serverCfg.ProxyBindAddr, strconv.Itoa(pxy.realBindPort)))
+			if errRet != nil {
+				err = errRet
+				return
+			}
+			pxy.listeners = append(pxy.listeners, listener)
+			xl.Infof("tcp proxy listen port [%d]", pxy.cfg.RemotePort)
 		}
 		defer func() {
 			if err != nil {
 				pxy.rc.TCPPortManager.Release(pxy.realBindPort)
 			}
 		}()
-		listener, errRet := net.Listen("tcp", net.JoinHostPort(pxy.serverCfg.ProxyBindAddr, strconv.Itoa(pxy.realBindPort)))
-		if errRet != nil {
-			err = errRet
-			return
-		}
-		pxy.listeners = append(pxy.listeners, listener)
-		xl.Infof("tcp proxy listen port [%d]", pxy.cfg.RemotePort)
+
+		logx.Errorf("tcp proxy listen port %v", pxy.cfg.RemotePort)
 	}
 
 	pxy.cfg.RemotePort = pxy.realBindPort

@@ -218,6 +218,7 @@ type ProxyType string
 
 const (
 	ProxyTypeTCP    ProxyType = "tcp"
+	ProxyTypeTCPV2  ProxyType = "tcpv2"
 	ProxyTypeUDP    ProxyType = "udp"
 	ProxyTypeTCPMUX ProxyType = "tcpmux"
 	ProxyTypeHTTP   ProxyType = "http"
@@ -229,6 +230,7 @@ const (
 
 var proxyConfigTypeMap = map[ProxyType]reflect.Type{
 	ProxyTypeTCP:    reflect.TypeOf(TCPProxyConfig{}),
+	ProxyTypeTCPV2:  reflect.TypeOf(TCPProxyConfig{}),
 	ProxyTypeUDP:    reflect.TypeOf(UDPProxyConfig{}),
 	ProxyTypeHTTP:   reflect.TypeOf(HTTPProxyConfig{}),
 	ProxyTypeHTTPS:  reflect.TypeOf(HTTPSProxyConfig{}),

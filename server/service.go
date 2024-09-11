@@ -31,6 +31,7 @@ import (
 	fmux "github.com/hashicorp/yamux"
 	quic "github.com/quic-go/quic-go"
 	"github.com/samber/lo"
+	"github.com/zeromicro/go-zero/core/logx"
 
 	"github.com/fatedier/frp/pkg/auth"
 	v1 "github.com/fatedier/frp/pkg/config/v1"
@@ -42,6 +43,7 @@ import (
 	"github.com/fatedier/frp/pkg/transport"
 	httppkg "github.com/fatedier/frp/pkg/util/http"
 	"github.com/fatedier/frp/pkg/util/log"
+	"github.com/fatedier/frp/pkg/util/mfutils"
 	netpkg "github.com/fatedier/frp/pkg/util/net"
 	"github.com/fatedier/frp/pkg/util/tcpmux"
 	"github.com/fatedier/frp/pkg/util/util"
@@ -167,6 +169,7 @@ func NewService(cfg *v1.ServerConfig) (*Service, error) {
 		cfg:               cfg,
 		ctx:               context.Background(),
 	}
+
 	if webServer != nil {
 		webServer.RouteRegister(svr.registerRouteHandlers)
 	}
@@ -427,8 +430,11 @@ func (svr *Service) handleConnection(ctx context.Context, conn net.Conn, interna
 	}
 	_ = conn.SetReadDeadline(time.Time{})
 
+	logx.Debugf("%v", mfutils.PrettyJson(rawMsg))
+
 	switch m := rawMsg.(type) {
 	case *msg.Login:
+		logx.Debugf("Login")
 		// server plugin hook
 		content := &plugin.LoginContent{
 			Login:         *m,
@@ -454,6 +460,7 @@ func (svr *Service) handleConnection(ctx context.Context, conn net.Conn, interna
 		if err := svr.RegisterWorkConn(conn, m); err != nil {
 			conn.Close()
 		}
+
 	case *msg.NewVisitorConn:
 		if err = svr.RegisterVisitorConn(conn, m); err != nil {
 			xl.Warnf("register visitor conn error: %v", err)
@@ -507,6 +514,8 @@ func (svr *Service) HandleListener(l net.Listener, internal bool) {
 
 		// Start a new goroutine to handle connection.
 		go func(ctx context.Context, frpConn net.Conn) {
+			logx.Errorf("HandleListener remote: %v, local: %v", frpConn.RemoteAddr(), frpConn.LocalAddr())
+
 			if lo.FromPtr(svr.cfg.Transport.TCPMux) && !internal {
 				fmuxCfg := fmux.DefaultConfig()
 				fmuxCfg.KeepAliveInterval = time.Duration(svr.cfg.Transport.TCPMuxKeepaliveInterval) * time.Second
@@ -606,6 +615,7 @@ func (svr *Service) RegisterControl(ctlConn net.Conn, loginMsg *msg.Login, inter
 		ctl.WaitClosed()
 		svr.ctlManager.Del(loginMsg.RunID, ctl)
 	}()
+
 	return nil
 }
 
@@ -639,6 +649,7 @@ func (svr *Service) RegisterWorkConn(workConn net.Conn, newMsg *msg.NewWorkConn)
 		})
 		return fmt.Errorf("invalid NewWorkConn with run id [%s]", newMsg.RunID)
 	}
+
 	return ctl.RegisterWorkConn(workConn)
 }
 

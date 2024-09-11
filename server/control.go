@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/samber/lo"
+	"github.com/zeromicro/go-zero/core/logx"
 
 	"github.com/fatedier/frp/pkg/auth"
 	"github.com/fatedier/frp/pkg/config"
@@ -32,6 +33,7 @@ import (
 	"github.com/fatedier/frp/pkg/msg"
 	plugin "github.com/fatedier/frp/pkg/plugin/server"
 	"github.com/fatedier/frp/pkg/transport"
+	"github.com/fatedier/frp/pkg/util/mfutils"
 	netpkg "github.com/fatedier/frp/pkg/util/net"
 	"github.com/fatedier/frp/pkg/util/util"
 	"github.com/fatedier/frp/pkg/util/version"
@@ -368,6 +370,8 @@ func (ctl *Control) registerMsgHandlers() {
 }
 
 func (ctl *Control) handleNewProxy(m msg.Message) {
+	logx.Debugf("handleNewProxy")
+
 	xl := ctl.xl
 	inMsg := m.(*msg.NewProxy)
 
@@ -403,6 +407,8 @@ func (ctl *Control) handleNewProxy(m msg.Message) {
 }
 
 func (ctl *Control) handlePing(m msg.Message) {
+	logx.Debugf("handlePing")
+
 	xl := ctl.xl
 	inMsg := m.(*msg.Ping)
 
@@ -447,6 +453,8 @@ func (ctl *Control) handleNatHoleReport(m msg.Message) {
 }
 
 func (ctl *Control) handleCloseProxy(m msg.Message) {
+	logx.Debugf("handleCloseProxy")
+
 	xl := ctl.xl
 	inMsg := m.(*msg.CloseProxy)
 	_ = ctl.CloseProxy(inMsg)
@@ -454,6 +462,8 @@ func (ctl *Control) handleCloseProxy(m msg.Message) {
 }
 
 func (ctl *Control) RegisterProxy(pxyMsg *msg.NewProxy) (remoteAddr string, err error) {
+	logx.Debugf("RegisterProxy pxyMsg: %v", mfutils.PrettyJson(pxyMsg))
+
 	var pxyConf v1.ProxyConfigurer
 	// Load configures from NewProxy message and validate.
 	pxyConf, err = config.NewProxyConfigurerFromMsg(pxyMsg, ctl.serverCfg)
@@ -478,6 +488,7 @@ func (ctl *Control) RegisterProxy(pxyMsg *msg.NewProxy) (remoteAddr string, err 
 		GetWorkConnFn:      ctl.GetWorkConn,
 		Configurer:         pxyConf,
 		ServerCfg:          ctl.serverCfg,
+		PxyManager:         ctl.pxyManager,
 	})
 	if err != nil {
 		return remoteAddr, err

@@ -101,6 +101,7 @@ func NewControl(ctx context.Context, sessionCtx *SessionContext) (*Control, erro
 
 	ctl.pm = proxy.NewManager(ctl.ctx, sessionCtx.Common, ctl.msgTransporter)
 	ctl.vm = visitor.NewManager(ctl.ctx, sessionCtx.RunID, sessionCtx.Common, ctl.connectServer, ctl.msgTransporter)
+
 	return ctl, nil
 }
 

@@ -17,6 +17,9 @@ package msg
 import (
 	"io"
 	"reflect"
+
+	"github.com/fatedier/frp/pkg/util/mfutils"
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 func AsyncHandler(f func(Message)) func(Message) {
@@ -56,6 +59,7 @@ func (d *Dispatcher) sendLoop() {
 		case <-d.doneCh:
 			return
 		case m := <-d.sendCh:
+			logx.Debugf("sendLoop m: %v", mfutils.PrettyJson(m))
 			_ = WriteMsg(d.rw, m)
 		}
 	}
@@ -68,6 +72,8 @@ func (d *Dispatcher) readLoop() {
 			close(d.doneCh)
 			return
 		}
+
+		logx.Debugf("readLoop")
 
 		if handler, ok := d.msgHandlers[reflect.TypeOf(m)]; ok {
 			handler(m)

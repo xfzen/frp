@@ -173,3 +173,10 @@ func (pm *Manager) UpdateAll(proxyCfgs []v1.ProxyConfigurer) {
 		xl.Infof("proxy added: %s", addPxyNames)
 	}
 }
+
+func (pm *Manager) GetProxies() map[string]*Wrapper {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	return pm.proxies
+}

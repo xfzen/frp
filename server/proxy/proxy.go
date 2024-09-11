@@ -25,8 +25,10 @@ import (
 	"time"
 
 	libio "github.com/fatedier/golib/io"
+	"github.com/zeromicro/go-zero/core/logx"
 	"golang.org/x/time/rate"
 
+	"github.com/fatedier/frp/mfproxy"
 	"github.com/fatedier/frp/pkg/config/types"
 	v1 "github.com/fatedier/frp/pkg/config/v1"
 	"github.com/fatedier/frp/pkg/msg"
@@ -72,6 +74,7 @@ type BaseProxy struct {
 	userInfo      plugin.UserInfo
 	loginMsg      *msg.Login
 	configurer    v1.ProxyConfigurer
+	pxyManager    *Manager
 
 	mu  sync.RWMutex
 	xl  *xlog.Logger
@@ -121,6 +124,8 @@ func (pxy *BaseProxy) Close() {
 // GetWorkConnFromPool try to get a new work connections from pool
 // for quickly response, we immediately send the StartWorkConn message to frpc after take out one from pool
 func (pxy *BaseProxy) GetWorkConnFromPool(src, dst net.Addr) (workConn net.Conn, err error) {
+	logx.Debugf("GetWorkConnFromPool src: %v, dst: %v, poolCount: %v", src.String(), dst.String(), pxy.poolCount)
+
 	xl := xlog.FromContextSafe(pxy.ctx)
 	// try all connections from the pool
 	for i := 0; i < pxy.poolCount+1; i++ {
@@ -210,6 +215,8 @@ func (pxy *BaseProxy) startCommonTCPListenersHandler() {
 
 // HandleUserTCPConnection is used for incoming user TCP connections.
 func (pxy *BaseProxy) handleUserTCPConnection(userConn net.Conn) {
+	logx.Debugf("handleUserTCPConnection localAddr: %v, remoteAddr: %v", userConn.LocalAddr(), userConn.RemoteAddr())
+
 	xl := xlog.FromContextSafe(pxy.Context())
 	defer userConn.Close()
 
@@ -223,6 +230,7 @@ func (pxy *BaseProxy) handleUserTCPConnection(userConn net.Conn) {
 		ProxyType:  cfg.Type,
 		RemoteAddr: userConn.RemoteAddr().String(),
 	}
+
 	_, err := rc.PluginManager.NewUserConn(content)
 	if err != nil {
 		xl.Warnf("the user conn [%s] was rejected, err:%v", content.RemoteAddr, err)
@@ -232,6 +240,7 @@ func (pxy *BaseProxy) handleUserTCPConnection(userConn net.Conn) {
 	// try all connections from the pool
 	workConn, err := pxy.GetWorkConnFromPool(userConn.RemoteAddr(), userConn.LocalAddr())
 	if err != nil {
+		logx.Errorf("GetWorkConnFromPool %v", err)
 		return
 	}
 	defer workConn.Close()
@@ -264,10 +273,33 @@ func (pxy *BaseProxy) handleUserTCPConnection(userConn net.Conn) {
 	name := pxy.GetName()
 	proxyType := cfg.Type
 	metrics.Server.OpenConnection(name, proxyType)
-	inCount, outCount, _ := libio.Join(local, userConn)
-	metrics.Server.CloseConnection(name, proxyType)
-	metrics.Server.AddTrafficIn(name, proxyType, inCount)
-	metrics.Server.AddTrafficOut(name, proxyType, outCount)
+
+	// mfproxy handler
+	userConnTmp := mfproxy.NewHTTPDetectingReadWriteCloser(userConn, 8)
+	proxiesMap := pxy.pxyManager.GetProxies()
+	for index, pxyItem := range proxiesMap {
+		workConnItem, err := pxyItem.GetWorkConnFromPool(userConn.RemoteAddr(), userConn.LocalAddr())
+		if err != nil {
+			logx.Errorf("GetWorkConnFromPool %v", err)
+			return
+		}
+
+		logx.Debugf("index: %v, workconn: %v/%v", index, workConnItem.LocalAddr(), workConnItem.RemoteAddr())
+
+		defer workConnItem.Close()
+
+		inCount, outCount, _ := libio.Join(local, userConnTmp) // forward userConn to local
+
+		metrics.Server.CloseConnection(name, proxyType)
+		metrics.Server.AddTrafficIn(name, proxyType, inCount)
+		metrics.Server.AddTrafficOut(name, proxyType, outCount)
+	}
+
+	// inCount, outCount, _ := libio.Join(local, userConnTmp) // forward userConn to local
+
+	// metrics.Server.CloseConnection(name, proxyType)
+	// metrics.Server.AddTrafficIn(name, proxyType, inCount)
+	// metrics.Server.AddTrafficOut(name, proxyType, outCount)
 	xl.Debugf("join connections closed")
 }
 
@@ -279,6 +311,7 @@ type Options struct {
 	GetWorkConnFn      GetWorkConnFn
 	Configurer         v1.ProxyConfigurer
 	ServerCfg          *v1.ServerConfig
+	PxyManager         *Manager
 }
 
 func NewProxy(ctx context.Context, options *Options) (pxy Proxy, err error) {
@@ -304,6 +337,7 @@ func NewProxy(ctx context.Context, options *Options) (pxy Proxy, err error) {
 		userInfo:      options.UserInfo,
 		loginMsg:      options.LoginMsg,
 		configurer:    configurer,
+		pxyManager:    options.PxyManager,
 	}
 
 	factory := proxyFactoryRegistry[reflect.TypeOf(configurer)]
@@ -338,6 +372,9 @@ func (pm *Manager) Add(name string, pxy Proxy) error {
 	}
 
 	pm.pxys[name] = pxy
+
+	logx.Debugf("Add sizeof: %v", len(pm.pxys))
+
 	return nil
 }
 
@@ -359,4 +396,22 @@ func (pm *Manager) GetByName(name string) (pxy Proxy, ok bool) {
 	defer pm.mu.RUnlock()
 	pxy, ok = pm.pxys[name]
 	return
+}
+
+// GetProxies returns a copy of the pxys map.
+func (pm *Manager) GetProxies() map[string]Proxy {
+	logx.Errorf("########GetProxies")
+
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	// Create a copy of the map to prevent external modifications
+	copyOfPxys := make(map[string]Proxy, len(pm.pxys))
+	for k, v := range pm.pxys {
+		copyOfPxys[k] = v
+	}
+
+	logx.Debugf("sizeof(copyOfPxys): %v", len(copyOfPxys))
+
+	return copyOfPxys
 }
