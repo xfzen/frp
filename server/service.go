@@ -43,7 +43,6 @@ import (
 	"github.com/fatedier/frp/pkg/transport"
 	httppkg "github.com/fatedier/frp/pkg/util/http"
 	"github.com/fatedier/frp/pkg/util/log"
-	"github.com/fatedier/frp/pkg/util/mfutils"
 	netpkg "github.com/fatedier/frp/pkg/util/net"
 	"github.com/fatedier/frp/pkg/util/tcpmux"
 	"github.com/fatedier/frp/pkg/util/util"
@@ -429,8 +428,6 @@ func (svr *Service) handleConnection(ctx context.Context, conn net.Conn, interna
 		return
 	}
 	_ = conn.SetReadDeadline(time.Time{})
-
-	logx.Debugf("%v", mfutils.PrettyJson(rawMsg))
 
 	switch m := rawMsg.(type) {
 	case *msg.Login:

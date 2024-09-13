@@ -18,7 +18,6 @@ import (
 	"io"
 	"reflect"
 
-	"github.com/fatedier/frp/pkg/util/mfutils"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
@@ -59,7 +58,6 @@ func (d *Dispatcher) sendLoop() {
 		case <-d.doneCh:
 			return
 		case m := <-d.sendCh:
-			logx.Debugf("sendLoop m: %v", mfutils.PrettyJson(m))
 			_ = WriteMsg(d.rw, m)
 		}
 	}

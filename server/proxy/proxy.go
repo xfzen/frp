@@ -18,13 +18,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"reflect"
 	"strconv"
 	"sync"
 	"time"
 
-	libio "github.com/fatedier/golib/io"
 	"github.com/zeromicro/go-zero/core/logx"
 	"golang.org/x/time/rate"
 
@@ -38,6 +38,7 @@ import (
 	"github.com/fatedier/frp/pkg/util/xlog"
 	"github.com/fatedier/frp/server/controller"
 	"github.com/fatedier/frp/server/metrics"
+	libio "github.com/fatedier/golib/io"
 )
 
 var proxyFactoryRegistry = map[reflect.Type]func(*BaseProxy) Proxy{}
@@ -124,9 +125,8 @@ func (pxy *BaseProxy) Close() {
 // GetWorkConnFromPool try to get a new work connections from pool
 // for quickly response, we immediately send the StartWorkConn message to frpc after take out one from pool
 func (pxy *BaseProxy) GetWorkConnFromPool(src, dst net.Addr) (workConn net.Conn, err error) {
-	logx.Debugf("GetWorkConnFromPool src: %v, dst: %v, poolCount: %v", src.String(), dst.String(), pxy.poolCount)
-
 	xl := xlog.FromContextSafe(pxy.ctx)
+
 	// try all connections from the pool
 	for i := 0; i < pxy.poolCount+1; i++ {
 		if workConn, err = pxy.getWorkConnFn(); err != nil {
@@ -204,6 +204,7 @@ func (pxy *BaseProxy) startCommonTCPListenersHandler() {
 					}
 
 					xl.Warnf("listener is closed: %s", err)
+					logx.Errorf("listener is closed: %s", err)
 					return
 				}
 				xl.Infof("get a user connection [%s]", c.RemoteAddr().String())
@@ -215,13 +216,11 @@ func (pxy *BaseProxy) startCommonTCPListenersHandler() {
 
 // HandleUserTCPConnection is used for incoming user TCP connections.
 func (pxy *BaseProxy) handleUserTCPConnection(userConn net.Conn) {
-	logx.Debugf("handleUserTCPConnection localAddr: %v, remoteAddr: %v", userConn.LocalAddr(), userConn.RemoteAddr())
-
 	xl := xlog.FromContextSafe(pxy.Context())
 	defer userConn.Close()
 
-	serverCfg := pxy.serverCfg
 	cfg := pxy.configurer.GetBaseConfig()
+
 	// server plugin hook
 	rc := pxy.GetResourceController()
 	content := &plugin.NewUserConnContent{
@@ -237,70 +236,93 @@ func (pxy *BaseProxy) handleUserTCPConnection(userConn net.Conn) {
 		return
 	}
 
-	// try all connections from the pool
-	workConn, err := pxy.GetWorkConnFromPool(userConn.RemoteAddr(), userConn.LocalAddr())
-	if err != nil {
-		logx.Errorf("GetWorkConnFromPool %v", err)
-		return
-	}
-	defer workConn.Close()
+	pxy.handleProxyUserConnection(userConn)
 
-	var local io.ReadWriteCloser = workConn
-	xl.Tracef("handler user tcp connection, use_encryption: %t, use_compression: %t",
-		cfg.Transport.UseEncryption, cfg.Transport.UseCompression)
-	if cfg.Transport.UseEncryption {
-		local, err = libio.WithEncryption(local, []byte(serverCfg.Auth.Token))
-		if err != nil {
-			xl.Errorf("create encryption stream error: %v", err)
-			return
-		}
-	}
-	if cfg.Transport.UseCompression {
-		var recycleFn func()
-		local, recycleFn = libio.WithCompressionFromPool(local)
-		defer recycleFn()
-	}
-
-	if pxy.GetLimiter() != nil {
-		local = libio.WrapReadWriteCloser(limit.NewReader(local, pxy.GetLimiter()), limit.NewWriter(local, pxy.GetLimiter()), func() error {
-			return local.Close()
-		})
-	}
-
-	xl.Debugf("join connections, workConn(l[%s] r[%s]) userConn(l[%s] r[%s])", workConn.LocalAddr().String(),
-		workConn.RemoteAddr().String(), userConn.LocalAddr().String(), userConn.RemoteAddr().String())
-
-	name := pxy.GetName()
-	proxyType := cfg.Type
-	metrics.Server.OpenConnection(name, proxyType)
-
-	// mfproxy handler
-	userConnTmp := mfproxy.NewHTTPDetectingReadWriteCloser(userConn, 8)
-	proxiesMap := pxy.pxyManager.GetProxies()
-	for index, pxyItem := range proxiesMap {
-		workConnItem, err := pxyItem.GetWorkConnFromPool(userConn.RemoteAddr(), userConn.LocalAddr())
-		if err != nil {
-			logx.Errorf("GetWorkConnFromPool %v", err)
-			return
-		}
-
-		logx.Debugf("index: %v, workconn: %v/%v", index, workConnItem.LocalAddr(), workConnItem.RemoteAddr())
-
-		defer workConnItem.Close()
-
-		inCount, outCount, _ := libio.Join(local, userConnTmp) // forward userConn to local
-
-		metrics.Server.CloseConnection(name, proxyType)
-		metrics.Server.AddTrafficIn(name, proxyType, inCount)
-		metrics.Server.AddTrafficOut(name, proxyType, outCount)
-	}
-
-	// inCount, outCount, _ := libio.Join(local, userConnTmp) // forward userConn to local
-
-	// metrics.Server.CloseConnection(name, proxyType)
-	// metrics.Server.AddTrafficIn(name, proxyType, inCount)
-	// metrics.Server.AddTrafficOut(name, proxyType, outCount)
 	xl.Debugf("join connections closed")
+}
+
+func (pxy *BaseProxy) handleProxyUserConnection(userConn net.Conn) {
+	logx.Debugf("handleProxyUserConnection remote: %v, local: %v", userConn.RemoteAddr(), userConn.LocalAddr())
+
+	xl := xlog.FromContextSafe(pxy.Context())
+	defer userConn.Close()
+	cfg := pxy.configurer.GetBaseConfig()
+	serverCfg := pxy.serverCfg
+
+	var tmpRwc io.ReadWriteCloser = userConn
+	userConnNew := mfproxy.WrapReadWriteCloserToConn(tmpRwc, userConn)
+	defer userConnNew.Close()
+
+	userConnNew.Wg.Add(1)
+	go func() {
+		defer userConnNew.Wg.Done()
+
+		_, _, errs := libio.Join(userConnNew.IntermediateWriter, userConnNew)
+		for _, err := range errs {
+			if err != nil {
+				log.Printf("Error during Join from userConn to intermediate: %v", err)
+			}
+		}
+	}()
+
+	// 使用 mfproxy.Join 从 intermediateReader 到 workConn
+	userConnNew.Wg.Add(1)
+	go func() {
+		for {
+			defer userConnNew.Wg.Done()
+			mfname := mfproxy.GetMFName()
+			if mfname == "" || userConnNew.UserWorkConn != nil {
+				continue
+			}
+
+			userProxy := pxy.pxyManager.GetProxies()[mfname]
+			if userProxy == nil {
+				continue
+			}
+			workConn, err := userProxy.GetWorkConnFromPool(userConn.RemoteAddr(), userConn.LocalAddr())
+			if err != nil {
+				logx.Errorf("GetWorkConnFromPool error: %v", err)
+				return
+			}
+			defer workConn.Close()
+
+			userConnNew.UserWorkConn = workConn
+
+			var local io.ReadWriteCloser = userConnNew.UserWorkConn
+			xl.Tracef("handler user tcp connection, use_encryption: %t, use_compression: %t",
+				cfg.Transport.UseEncryption, cfg.Transport.UseCompression)
+			if cfg.Transport.UseEncryption {
+				local, err = libio.WithEncryption(local, []byte(serverCfg.Auth.Token))
+				if err != nil {
+					xl.Errorf("create encryption stream error: %v", err)
+					return
+				}
+			}
+			if cfg.Transport.UseCompression {
+				var recycleFn func()
+				local, recycleFn = libio.WithCompressionFromPool(local)
+				defer recycleFn()
+			}
+
+			if pxy.GetLimiter() != nil {
+				local = libio.WrapReadWriteCloser(limit.NewReader(local, pxy.GetLimiter()), limit.NewWriter(local, pxy.GetLimiter()), func() error {
+					return local.Close()
+				})
+			}
+
+			xl.Debugf("join connections, workConn(l[%s] r[%s]) userConn(l[%s] r[%s])", workConn.LocalAddr().String(),
+				workConn.RemoteAddr().String(), userConn.LocalAddr().String(), userConn.RemoteAddr().String())
+
+			name := pxy.GetName()
+			proxyType := cfg.Type
+			metrics.Server.OpenConnection(name, proxyType)
+			inCount, outCount, _ := libio.Join(workConn, userConnNew.IntermediateReader)
+			metrics.Server.CloseConnection(name, proxyType)
+			metrics.Server.AddTrafficIn(name, proxyType, inCount)
+			metrics.Server.AddTrafficOut(name, proxyType, outCount)
+		}
+	}()
+	userConnNew.Wg.Wait()
 }
 
 type Options struct {
@@ -365,6 +387,8 @@ func NewManager() *Manager {
 }
 
 func (pm *Manager) Add(name string, pxy Proxy) error {
+	logx.Debugf("Manager Add name: %v, proxy: %v", name, pxy)
+
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 	if _, ok := pm.pxys[name]; ok {
@@ -372,8 +396,6 @@ func (pm *Manager) Add(name string, pxy Proxy) error {
 	}
 
 	pm.pxys[name] = pxy
-
-	logx.Debugf("Add sizeof: %v", len(pm.pxys))
 
 	return nil
 }
@@ -400,8 +422,6 @@ func (pm *Manager) GetByName(name string) (pxy Proxy, ok bool) {
 
 // GetProxies returns a copy of the pxys map.
 func (pm *Manager) GetProxies() map[string]Proxy {
-	logx.Errorf("########GetProxies")
-
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 
@@ -410,8 +430,6 @@ func (pm *Manager) GetProxies() map[string]Proxy {
 	for k, v := range pm.pxys {
 		copyOfPxys[k] = v
 	}
-
-	logx.Debugf("sizeof(copyOfPxys): %v", len(copyOfPxys))
 
 	return copyOfPxys
 }

@@ -48,8 +48,6 @@ func NewTCPProxy(baseProxy *BaseProxy) Proxy {
 }
 
 func (pxy *TCPProxy) Run() (remoteAddr string, err error) {
-	logx.Debugf("TCPProxy Run remoteAddr: %v", remoteAddr)
-
 	xl := pxy.xl
 	if pxy.cfg.LoadBalancer.Group != "" {
 		l, realBindPort, errRet := pxy.rc.TCPGroupCtl.Listen(pxy.name, pxy.cfg.LoadBalancer.Group, pxy.cfg.LoadBalancer.GroupKey,
@@ -74,7 +72,7 @@ func (pxy *TCPProxy) Run() (remoteAddr string, err error) {
 
 		if err != nil {
 			if proxyType == "tcpv2" {
-				logx.Debugf("TCP V2")
+				// logx.Debugf("TCP V2")
 				pxy.realBindPort = pxy.cfg.RemotePort
 				err = nil
 			} else {
@@ -96,7 +94,7 @@ func (pxy *TCPProxy) Run() (remoteAddr string, err error) {
 			}
 		}()
 
-		logx.Errorf("tcp proxy listen port %v", pxy.cfg.RemotePort)
+		// logx.Errorf("tcp proxy listen port %v", pxy.cfg.RemotePort)
 	}
 
 	pxy.cfg.RemotePort = pxy.realBindPort
