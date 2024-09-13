@@ -370,8 +370,6 @@ func (ctl *Control) registerMsgHandlers() {
 }
 
 func (ctl *Control) handleNewProxy(m msg.Message) {
-	logx.Debugf("handleNewProxy")
-
 	xl := ctl.xl
 	inMsg := m.(*msg.NewProxy)
 
@@ -407,8 +405,6 @@ func (ctl *Control) handleNewProxy(m msg.Message) {
 }
 
 func (ctl *Control) handlePing(m msg.Message) {
-	logx.Debugf("handlePing")
-
 	xl := ctl.xl
 	inMsg := m.(*msg.Ping)
 
@@ -453,8 +449,6 @@ func (ctl *Control) handleNatHoleReport(m msg.Message) {
 }
 
 func (ctl *Control) handleCloseProxy(m msg.Message) {
-	logx.Debugf("handleCloseProxy")
-
 	xl := ctl.xl
 	inMsg := m.(*msg.CloseProxy)
 	_ = ctl.CloseProxy(inMsg)

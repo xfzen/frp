@@ -13,14 +13,11 @@ import (
 
 // 判断是否为 HTTP 请求
 func getHTTPUrl(data []byte) (string, error) {
-	// 使用 bufio.NewReader 从数据流中提取第一行
 	reader := bufio.NewReader(bytes.NewReader(data))
 	line, err := reader.ReadString('\n')
 	if err != nil {
 		return "", err
 	}
-
-	// logx.Debugf("%v", string(data))
 
 	// 检查是否是有效的HTTP请求
 	requestParts := strings.Split(line, " ")

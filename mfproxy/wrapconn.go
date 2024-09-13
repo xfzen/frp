@@ -18,7 +18,7 @@ type WrapReadWriteCloserConn struct {
 	IntermediateWriter net.Conn        // PipeWriter for intermediate data
 	UserWorkConn       net.Conn        // workconn of proxy
 
-	Mutex sync.Mutex // 用于锁定读写的互斥锁
+	mutex sync.Mutex // 用于锁定读写的互斥锁
 }
 
 // WrapReadWriteCloserToConn remains the same
@@ -39,16 +39,17 @@ func WrapReadWriteCloserToConn(rwc io.ReadWriteCloser, underConn net.Conn) *Wrap
 
 // Intercept the Read method
 func (conn *WrapReadWriteCloserConn) Read(p []byte) (int, error) {
-	// Read data from the underlying ReadWriteCloser
 	n, err := conn.ReadWriteCloser.Read(p)
 	if err != nil {
-		logx.Debugf("conn.ReadWriteCloser.Read err: %v", err)
+		logx.Errorf("conn.ReadWriteCloser.Read err: %v", err)
 		return n, err
 	}
 
 	if n <= 0 {
 		return n, nil
 	}
+
+	logx.Debugf("n: %v", n)
 
 	url, err := getHTTPUrl(p[:n])
 	if err == nil {

@@ -242,21 +242,15 @@ func (pxy *BaseProxy) handleUserTCPConnection(userConn net.Conn) {
 }
 
 func (pxy *BaseProxy) handleProxyUserConnection(userConn net.Conn) {
-	logx.Debugf("handleProxyUserConnection remote: %v, local: %v", userConn.RemoteAddr(), userConn.LocalAddr())
-
 	xl := xlog.FromContextSafe(pxy.Context())
-	defer userConn.Close()
-	cfg := pxy.configurer.GetBaseConfig()
-	serverCfg := pxy.serverCfg
+
+	xl.Infof("handleProxyUserConnection user connection [%s]", userConn.RemoteAddr().String())
 
 	var tmpRwc io.ReadWriteCloser = userConn
 	userConnNew := mfproxy.WrapReadWriteCloserToConn(tmpRwc, userConn)
-	defer userConnNew.Close()
+	// defer userConnNew.Close()
 
-	userConnNew.Wg.Add(1)
 	go func() {
-		defer userConnNew.Wg.Done()
-
 		_, _, errs := libio.Join(userConnNew.IntermediateWriter, userConnNew)
 		for _, err := range errs {
 			if err != nil {
@@ -265,11 +259,16 @@ func (pxy *BaseProxy) handleProxyUserConnection(userConn net.Conn) {
 		}
 	}()
 
+	cfg := pxy.configurer.GetBaseConfig()
+	serverCfg := pxy.serverCfg
+
 	// 使用 mfproxy.Join 从 intermediateReader 到 workConn
 	userConnNew.Wg.Add(1)
 	go func() {
+		defer userConnNew.Wg.Done()
 		for {
-			defer userConnNew.Wg.Done()
+			time.Sleep(50 * time.Millisecond)
+
 			mfname := mfproxy.GetMFName()
 			if mfname == "" || userConnNew.UserWorkConn != nil {
 				continue
@@ -279,12 +278,12 @@ func (pxy *BaseProxy) handleProxyUserConnection(userConn net.Conn) {
 			if userProxy == nil {
 				continue
 			}
+
 			workConn, err := userProxy.GetWorkConnFromPool(userConn.RemoteAddr(), userConn.LocalAddr())
 			if err != nil {
 				logx.Errorf("GetWorkConnFromPool error: %v", err)
 				return
 			}
-			defer workConn.Close()
 
 			userConnNew.UserWorkConn = workConn
 
@@ -387,8 +386,6 @@ func NewManager() *Manager {
 }
 
 func (pm *Manager) Add(name string, pxy Proxy) error {
-	logx.Debugf("Manager Add name: %v, proxy: %v", name, pxy)
-
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 	if _, ok := pm.pxys[name]; ok {
